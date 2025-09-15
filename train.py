@@ -9,6 +9,7 @@ import os
 import sys
 import yaml
 import torch
+import numpy as np
 from torch.utils.data import DataLoader, TensorDataset
 
 # 添加项目根目录到Python路径
@@ -153,6 +154,9 @@ def main():
     else:
         raise FileNotFoundError(f"路径不存在: {args.data_path}")
     
+    # 保留原始数据副本以供后续使用
+    original_data = data.copy()
+    
     logger.info(f"数据形状: {data.shape}")
     logger.info(f"输入列: {preprocessor.input_columns}")
     logger.info(f"目标列: {preprocessor.target_column}")
@@ -281,6 +285,53 @@ def main():
         best_model_dest = os.path.join(experiment_dir, "best_model.pth")
         shutil.copy2(checkpoint_best_path, best_model_dest)
         logger.info(f"复制最佳模型到: {best_model_dest}")
+
+    # 反归一化预测结果和目标值
+    predictions = np.array(predictions)
+    targets = np.array(targets)
+    
+    if hasattr(preprocessor, 'inverse_transform_target'):
+        logger.info("反归一化预测结果和目标值...")
+        predictions_original = preprocessor.inverse_transform_target(predictions)
+        targets_original = preprocessor.inverse_transform_target(targets)
+    else:
+        predictions_original = predictions
+        targets_original = targets
+
+    # 计算详细指标
+    from src.utils.metrics import calculate_metrics
+    metrics = calculate_metrics(targets_original, predictions_original, task_type='regression')
+
+    # 保存评估结果
+    eval_results = {
+        'test': {
+            'test_loss': float(avg_test_loss),
+            'metrics': {k: float(v) for k, v in metrics.items()},
+            'num_samples': len(targets_original)
+        }
+    }
+    
+    eval_results_file = os.path.join(experiment_dir, 'test_results.yaml')
+    with open(eval_results_file, 'w', encoding='utf-8') as f:
+        yaml.dump(eval_results, f, default_flow_style=False, allow_unicode=True)
+    logger.info(f"详细评估结果已保存到: {eval_results_file}")
+
+    # 保存预测结果（原始尺度）
+    predictions_file = os.path.join(experiment_dir, 'test_predictions.csv')
+    import pandas as pd
+    
+    # 获取测试集的原始CIR数据
+    test_indices = preprocessor.test_indices
+    test_cir_data = original_data.iloc[test_indices]['CIR'].values
+    
+    df_results = pd.DataFrame({
+        'CIR': test_cir_data,
+        'target': targets_original,
+        'prediction': predictions_original,
+        'error': targets_original - predictions_original
+    })
+    df_results.to_csv(predictions_file, index=False)
+    logger.info(f"测试集预测结果已保存到: {predictions_file}")
     
     # 保存预处理器
     import pickle

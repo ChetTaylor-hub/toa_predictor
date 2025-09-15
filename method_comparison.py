@@ -56,7 +56,8 @@ class TraditionalToAEstimators:
         cir_abs = np.abs(cir)
         if len(cir_abs) < 3:
             return 0.0
-            
+        
+        # moving_avg = signal.convolve(cir_abs, np.ones(3)/3, mode='same')
         # 计算二阶导数来检测凹凸性变化
         second_derivative = np.diff(cir_abs, n=2)
         
@@ -72,28 +73,119 @@ class TraditionalToAEstimators:
         # 如果没有找到合适的拐点，回退到Peak方法
         return self.peak_method(cir, noise_threshold)
     
-    def lde_method(self, cir: np.ndarray, noise_threshold: float = 0.1,
-                   small_window: int = 3, large_window: int = 7, 
-                   detection_factor: float = 5.0) -> float:
-        """LDE方法：前沿检测"""
-        cir_abs = np.abs(cir)
+    # def lde_method(self, cir: np.ndarray, noise_threshold: float = 0.1,
+    #                small_window: int = 3, large_window: int = 9, 
+    #                detection_factor: float = 1.5) -> float:
+    #     """LDE方法：前沿检测"""
+    #     cir_abs = np.abs(cir)
         
-        # 应用移动平均滤波
-        moving_avg = signal.convolve(cir_abs, np.ones(3)/3, mode='same')
+    #     # 应用移动平均滤波
+    #     moving_avg = signal.convolve(cir_abs, np.ones(3)/3, mode='same')
         
-        # 应用两个不同窗口大小的移动最大值滤波器
-        max_small = maximum_filter1d(moving_avg, size=small_window)
-        max_large = maximum_filter1d(moving_avg, size=large_window)
+    #     # 应用两个不同窗口大小的移动最大值滤波器
+    #     max_small = maximum_filter1d(moving_avg, size=small_window)
+    #     max_large = maximum_filter1d(moving_avg, size=large_window)
         
-        # 寻找检测条件
-        for i in range(len(max_small)):
-            if (max_small[i] > noise_threshold and 
-                max_large[i] > 0 and 
-                max_small[i] > max_large[i] * detection_factor):
-                return i / self.sampling_rate
+    #     # 寻找检测条件
+    #     for i in range(len(max_small)):
+    #         if (max_small[i] > noise_threshold and 
+    #             max_large[i] > 0 and 
+    #             max_small[i] > max_large[i] * detection_factor):
+    #             return i / self.sampling_rate
         
-        # 如果没有找到，回退到Peak方法
-        return self.peak_method(cir, noise_threshold)
+    #     # 如果没有找到，回退到Peak方法
+    #     return self.peak_method(cir, noise_threshold)
+    
+    def lde_method(self,
+                cir,
+                threshold=None,         # 绝对阈值（如果指定）或 None
+                k_sigma=4.0,            # 若 threshold 为 None，则阈值 = mean_noise + k_sigma * sigma_noise
+                noise_window=None,
+                consecutive=1,          # 需要连续多少个样点高于阈值才认为触发（>=1）
+                min_index=0,            # 忽略 min_index 之前的样点
+                max_index=None,         # 忽略 max_index 之后的样点
+                refine_subsample=True   # 是否对跨阈点做线性插值提升精度
+                ):
+        """
+        对单个 CIR（采样波形）执行 LDE（Leading Edge Detection）
+        返回: crossing_index (样点索引，可能是小数 if refined)
+        说明:
+        - LDE: 找到第一个满足 `样点 > 阈值` 且满足 consecutive 连续条件的样点。
+        - refine_subsample: 在 first crossing 的样点与其前一样点之间做线性插值得到更精确到达时间。
+        """
+        cir = np.asarray(cir).astype(float)
+        n = len(cir)
+        if max_index is None:
+            max_index = n - 1
+        # 估计噪声与阈值
+        mean_noise, sigma_noise = estimate_noise(cir, noise_window=noise_window)
+        if threshold is None:
+            thresh = mean_noise + k_sigma * sigma_noise
+        else:
+            thresh = float(threshold)
+
+        # 搜索区域限制
+        i = max(min_index, 0)
+        end_i = min(max_index, n - 1)
+
+        # 连续判定：寻找第一个满足 consecutive 个连续样点 > threshold
+        consec_count = 0
+        first_cross_idx = None
+        for idx in range(i, end_i + 1):
+            if cir[idx] > thresh:
+                consec_count += 1
+                if consec_count >= consecutive:
+                    first_cross_idx = idx - (consec_count - 1)  # 第一个满足的样点索引
+                    break
+            else:
+                consec_count = 0
+
+        if first_cross_idx is None:
+            return self.peak_method(cir, noise_threshold=thresh)
+
+        # 亚采样线性插值（在first_cross_idx与其前一样点之间）
+        if refine_subsample and first_cross_idx > 0:
+            y0 = cir[first_cross_idx - 1]
+            y1 = cir[first_cross_idx]
+            # 若 y1 == y0（非常罕见），则直接返回整数索引
+            if y1 == y0:
+                frac = 0.0
+            else:
+                # 线性插值求 crossing fraction f in [0,1] such that y0 + f*(y1-y0) = thresh
+                frac = (thresh - y0) / (y1 - y0)
+                # 截断到 [0,1]
+                frac = max(0.0, min(1.0, frac))
+            crossing_index = (first_cross_idx - 1) + frac
+        else:
+            crossing_index = float(first_cross_idx)
+
+        return crossing_index
+
+
+def estimate_noise(cir, noise_window=None, method='std'):
+    """
+    估计噪声基线与噪声标准差
+    cir: 1D numpy array
+    noise_window: tuple (start_idx, end_idx) for noise-only region (optional)
+                  if None, use first 10% samples as noise region
+    method: 'std' or 'mad' (median absolute deviation)
+    返回: (mean_noise, sigma_noise)
+    """
+    n = len(cir)
+    if noise_window is None:
+        start = int(n * 3 / 4)
+        # end = max(1, int(0.1 * n))
+        noise_seg = cir[start:]
+    else:
+        s, e = noise_window
+        noise_seg = cir[s:e]
+    mean_noise = float(np.mean(noise_seg))
+    if method == 'mad':
+        mad = np.median(np.abs(noise_seg - np.median(noise_seg)))
+        sigma = 1.4826 * mad
+    else:
+        sigma = float(np.std(noise_seg, ddof=1))
+    return mean_noise, sigma
 
 
 def evaluate_traditional_methods_on_data(test_data_path: str) -> dict:
@@ -129,16 +221,17 @@ def evaluate_traditional_methods_on_data(test_data_path: str) -> dict:
             try:
                 # 解析CIR数据
                 cir = estimator.parse_cir_string(row['CIR'])
+                # cir = cir / max(np.abs(cir)) if len(cir) > 0 else cir
                 true_toa = row['TOA']
                 
                 if len(cir) == 0:
                     continue
                 
-                threshold = 0.5 * max(np.abs(cir))
+                threshold = 0.62 * max(np.abs(cir))
                 # 计算各方法的估计结果
                 peak_toa = estimator.peak_method(cir, threshold)
                 ifp_toa = estimator.ifp_method(cir, threshold)
-                lde_toa = estimator.lde_method(cir, threshold)
+                lde_toa = estimator.lde_method(cir)
                 
                 # 存储结果
                 results['Peak']['predictions'].append(peak_toa)
@@ -167,15 +260,15 @@ def evaluate_traditional_methods_on_data(test_data_path: str) -> dict:
                     targets, predictions, task_type='regression'
                 )
                 
+                errors = np.abs(predictions - targets)
+
                 traditional_results[method_name] = {
                     'mae': metrics['mae'],
                     'rmse': metrics['rmse'],
-                    'p90_error': np.percentile(
-                        np.abs(predictions - targets), 90
-                    ),
+                    'p90_error': np.percentile(errors, 90),
                     'description': get_method_description(method_name),
                     'samples': len(predictions),
-                    'errors': np.abs(predictions - targets)
+                    'errors': errors
                 }
         
         return traditional_results
@@ -281,14 +374,17 @@ def load_and_evaluate_model(
                     targets, predictions, task_type='regression'
                 )
                 
+                errors = np.abs(predictions - targets)
+                
                 return {
                     'metrics': {
                         'mae': metrics['mae'],
                         'rmse': metrics['rmse'],
+                        'p90_error': np.percentile(errors, 90)
                     },
                     'test_samples': len(targets),
                     'evaluation_method': 'from_predictions_file',
-                    'errors': np.abs(predictions - targets)
+                    'errors': errors
                 }
         
         # 3. 如果提供了测试数据，进行实时模型加载和评估
@@ -410,14 +506,17 @@ def _load_model_and_predict(experiment_dir: str, test_data_path: str) -> dict:
             targets_orig, predictions_orig, task_type='regression'
         )
         
+        errors = np.abs(predictions_orig - targets_orig)
+        
         return {
             'metrics': {
                 'mae': metrics['mae'],
                 'rmse': metrics['rmse'],
+                'p90_error': np.percentile(errors, 90)
             },
             'test_samples': len(targets_orig),
             'evaluation_method': 'live_model_prediction',
-            'errors': np.abs(predictions_orig - targets_orig)
+            'errors': errors
         }
         
     except Exception as e:
@@ -432,12 +531,14 @@ def main():
     parser.add_argument(
         '--test_data',
         type=str,
-        required=True,
+        # required=True,
+        default="/Users/taochen/coder/code/TOA/datasets/6611037/dataset_split/test.csv",
         help='测试数据路径（csv文件或包含csv文件的文件夹）'
     )
     parser.add_argument(
         '--experiment_dir',
         type=str,
+        default="results/toa_lstm_2",
         help='模型目录路径（可选）'
     )
     
