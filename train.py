@@ -22,6 +22,7 @@ from src.training.trainer import (ModelTrainer, create_optimizer,
 from src.training.utils import (get_device, set_seed, create_loss_function,
                                 print_device_info)
 from src.utils.logger import create_experiment_logger
+from src.utils.data_loader import load_data_from_path
 
 
 def create_data_loader(X, y, batch_size=32, shuffle=True):
@@ -66,11 +67,15 @@ def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='统一序列预测模型训练')
     parser.add_argument('--config', type=str, required=True,
-                       help='配置文件路径')
+                        help='配置文件路径')
     parser.add_argument('--data_path', type=str, required=True,
-                       help='训练数据路径')
+                        help='训练数据路径（文件或文件夹）')
     parser.add_argument('--experiment_name', type=str, default='experiment',
-                       help='实验名称')
+                        help='实验名称')
+    parser.add_argument('--recursive', action='store_true',
+                        help='递归搜索子文件夹中的CSV文件')
+    parser.add_argument('--no_source_column', action='store_true',
+                        help='不添加源文件列')
     
     return parser.parse_args()
 
@@ -119,8 +124,34 @@ def main():
     
     # 创建预处理器并加载数据
     print("\n1. 创建数据预处理器并加载数据...")
-    preprocessor, data = DataPreprocessor.from_config_and_data(
-        config, args.data_path)
+    
+    # 判断输入路径类型并相应加载数据
+    if os.path.isfile(args.data_path):
+        # 单个CSV文件，使用原有方式
+        print(f"检测到单个文件: {args.data_path}")
+        preprocessor, data = DataPreprocessor.from_config_and_data(
+            config, args.data_path)
+        print(f"加载数据完成: {data.shape}")
+    elif os.path.isdir(args.data_path):
+        # 文件夹，使用新的批量加载方式
+        print(f"检测到文件夹: {args.data_path}")
+        data = load_data_from_path(
+            args.data_path,
+            recursive=args.recursive,
+            add_source_column=not args.no_source_column
+        )
+        
+        print(f"从文件夹 {args.data_path} 加载数据完成: {data.shape}")
+        if 'source_file' in data.columns:
+            file_count = data['source_file'].nunique()
+            print(f"合并了 {file_count} 个CSV文件")
+            print(f"文件列表: {list(data['source_file'].unique())}")
+        
+        # 创建预处理器（直接传入数据）
+        preprocessor, _ = DataPreprocessor.from_config_and_data(
+            config, "", data=data)
+    else:
+        raise FileNotFoundError(f"路径不存在: {args.data_path}")
     
     logger.info(f"数据形状: {data.shape}")
     logger.info(f"输入列: {preprocessor.input_columns}")

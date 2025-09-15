@@ -20,6 +20,7 @@ from src.models.transformer_model import TransformerModel
 from src.training.utils import get_device, create_loss_function
 from src.utils.metrics import calculate_metrics, print_regression_report, print_classification_report
 from src.utils.logger import setup_logger
+from src.utils.data_loader import load_data_from_path
 from torch.utils.data import DataLoader, TensorDataset
 
 
@@ -27,11 +28,15 @@ def parse_args():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(description='评估序列预测模型')
     parser.add_argument('--experiment_dir', type=str, required=True,
-                       help='实验目录路径 (results/实验名)')
+                        help='实验目录路径 (results/实验名)')
     parser.add_argument('--data_path', type=str, required=True,
-                       help='测试数据路径')
+                        help='测试数据路径（文件或文件夹）')
     parser.add_argument('--use_best_model', action='store_true',
-                       help='使用最佳模型而不是最终模型')
+                        help='使用最佳模型而不是最终模型')
+    parser.add_argument('--recursive', action='store_true',
+                        help='递归搜索子文件夹中的CSV文件')
+    parser.add_argument('--no_source_column', action='store_true',
+                        help='不添加源文件列')
     
     return parser.parse_args()
 
@@ -154,8 +159,28 @@ def main():
     logger.info(f"加载模型: {model_path}")
     
     # 加载测试数据
-    import pandas as pd
-    data = pd.read_csv(args.data_path)
+    if os.path.isfile(args.data_path):
+        # 单个CSV文件
+        print(f"检测到单个文件: {args.data_path}")
+        import pandas as pd
+        data = pd.read_csv(args.data_path)
+        print(f"加载数据完成: {data.shape}")
+    elif os.path.isdir(args.data_path):
+        # 文件夹，使用批量加载
+        print(f"检测到文件夹: {args.data_path}")
+        data = load_data_from_path(
+            args.data_path,
+            recursive=args.recursive,
+            add_source_column=not args.no_source_column
+        )
+        
+        print(f"从文件夹 {args.data_path} 加载数据完成: {data.shape}")
+        if 'source_file' in data.columns:
+            file_count = data['source_file'].nunique()
+            print(f"合并了 {file_count} 个CSV文件")
+    else:
+        raise FileNotFoundError(f"路径不存在: {args.data_path}")
+    
     logger.info(f"测试数据形状: {data.shape}")
     
     # 使用预处理器处理测试数据
@@ -221,6 +246,7 @@ def main():
     predictions_file = os.path.join(args.experiment_dir, 'test_predictions.csv')
     import pandas as pd
     df_results = pd.DataFrame({
+        'CIR': data['CIR'],
         'target': targets_original,
         'prediction': predictions_original,
         'error': targets_original - predictions_original

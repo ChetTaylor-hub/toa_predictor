@@ -6,3 +6,5 @@ data/
 *.log
 
 .vscode/
+
+.Ds_Store
