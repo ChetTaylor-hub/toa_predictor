@@ -11,7 +11,7 @@ end
 println("正在安装Julia包...")
 
 # 数据集生成所需的包列表
-packages = ["Random", "Plots", "CSV", "DataFrames", "JSON", "UnderwaterAcoustics", "AcousticsToolbox", "FFTW"]
+packages = ["Random", "Plots", "CSV", "DataFrames", "JSON", "UnderwaterAcoustics", "AcousticsToolbox", "FFTW", "AcousticRayTracers"]
 
 for pkg in packages
     println("正在安装包: $pkg")

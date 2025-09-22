@@ -76,6 +76,8 @@ class DataPreprocessor:
         sample_values = data[column].dropna().head(5)
         
         for value in sample_values:
+            if isinstance(value, (list, np.ndarray)):
+                return 'sequence'
             value_str = str(value)
             # 检查是否为字符串表示的数组
             if value_str.startswith('[') and value_str.endswith(']'):
@@ -89,8 +91,12 @@ class DataPreprocessor:
         
         return 'numeric'
     
-    def _parse_sequence_string(self, seq_str: str) -> np.ndarray:
-        """解析序列字符串为数组"""
+    def _parse_sequence_string(self, seq_str) -> np.ndarray:
+        """解析序列字符串或直接返回array"""
+        if isinstance(seq_str, np.ndarray):
+            return seq_str.astype(np.float32)
+        if isinstance(seq_str, list):
+            return np.array(seq_str, dtype=np.float32)
         try:
             seq_list = ast.literal_eval(seq_str)
             return np.array(seq_list, dtype=np.float32)
@@ -99,7 +105,7 @@ class DataPreprocessor:
     
     def _process_sequence_column(self, data: pd.DataFrame, column: str) -> np.ndarray:
         """
-        处理序列列
+        处理序列列，兼容array/list/字符串
         
         Args:
             data: 数据DataFrame
@@ -113,9 +119,9 @@ class DataPreprocessor:
         
         print(f"处理序列列 '{column}'...")
         
-        for i, seq_str in enumerate(data[column]):
+        for i, seq in enumerate(data[column]):
             try:
-                seq_array = self._parse_sequence_string(seq_str)
+                seq_array = self._parse_sequence_string(seq)
                 sequences.append(seq_array)
                 sequence_lengths.append(len(seq_array))
             except Exception as e:
@@ -124,7 +130,7 @@ class DataPreprocessor:
         
         # 确定序列长度
         if self.sequence_length is None:
-            self.sequence_length = min(min(sequence_lengths), self.max_sequence_length)
+            self.sequence_length = max(max(sequence_lengths), self.max_sequence_length)
             print(f"自动确定序列长度: {self.sequence_length}")
         
         # 统一序列长度
@@ -136,8 +142,9 @@ class DataPreprocessor:
             else:
                 # 填充到指定长度
                 processed_seq = np.zeros(self.sequence_length, dtype=np.float32)
-                processed_seq[:len(seq)] = seq
-            
+                start_index = np.random.randint(0, self.sequence_length - len(seq) + 1)
+                processed_seq[start_index:start_index + len(seq)] = seq
+
             processed_sequences.append(processed_seq)
         
         result = np.array(processed_sequences)
@@ -473,3 +480,6 @@ def load_splits(load_dir: str) -> Tuple[Tuple[np.ndarray, np.ndarray], ...]:
     y_test = np.load(os.path.join(load_dir, 'y_test.npy'))
     
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
+
+
+

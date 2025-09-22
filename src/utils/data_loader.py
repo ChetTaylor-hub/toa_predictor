@@ -123,19 +123,22 @@ def load_data_from_path(data_path: str,
     """
     logger.info(f"开始加载数据: {data_path}")
     
-    # 查找CSV文件
-    csv_files = find_csv_files(data_path, recursive=recursive)
+    if "complete_dataset.json" in set(os.listdir(data_path)):
+        data = load_enhanced_dataset(data_path)
+    else:
+        # 查找CSV文件
+        csv_files = find_csv_files(data_path, recursive=recursive)
     
-    logger.info(f"找到 {len(csv_files)} 个CSV文件:")
-    for i, file_path in enumerate(csv_files, 1):
-        logger.info(f"  {i}. {file_path}")
+        logger.info(f"找到 {len(csv_files)} 个CSV文件:")
+        for i, file_path in enumerate(csv_files, 1):
+            logger.info(f"  {i}. {file_path}")
     
-    # 加载并合并数据
-    data = load_csv_files(
-        csv_files, 
-        combine_method=combine_method,
-        add_source_column=add_source_column
-    )
+        # 加载并合并数据
+        data = load_csv_files(
+            csv_files, 
+            combine_method=combine_method,
+            add_source_column=add_source_column
+        )
     
     logger.info(f"数据加载完成: {data.shape}")
     
@@ -204,3 +207,52 @@ def get_data_summary(data: pd.DataFrame) -> dict:
         summary['files_list'] = data['source_file'].unique().tolist()
     
     return summary
+
+def load_enhanced_dataset(data_dir: str, meta_file: str = None, limit: int = None) -> pd.DataFrame:
+    """
+    加载 enhanced_toa_generator_refactored.py 生成的数据（metadata.csv 或 complete_dataset.json），自动读取信号文件
+    Args:
+        data_dir: 数据集目录（如 toa_dataset_enhanced_refactored）
+        meta_file: 指定元数据文件（默认自动检测）
+        limit: 只加载前 limit 个样本（可选）
+    Returns:
+        DataFrame: 包含 CIR 波形和 TOA/primary_toa
+    """
+    import pandas as pd
+    import numpy as np
+    from pathlib import Path
+    import json
+    data_dir = Path(data_dir)
+    # 自动检测元数据文件
+    if meta_file is None:
+        if (data_dir / "metadata.csv").exists():
+            meta_file = data_dir / "metadata.csv"
+            df = pd.read_csv(meta_file)
+        elif (data_dir / "complete_dataset.json").exists():
+            meta_file = data_dir / "complete_dataset.json"
+            # JSON Lines 格式
+            with open(meta_file, 'r') as f:
+                rows = [json.loads(line) for line in f]
+            df = pd.DataFrame(rows)
+        else:
+            raise FileNotFoundError("未找到元数据文件")
+    else:
+        meta_file = Path(meta_file)
+        if meta_file.suffix == '.csv':
+            df = pd.read_csv(meta_file)
+        else:
+            with open(meta_file, 'r') as f:
+                rows = [json.loads(line) for line in f]
+            df = pd.DataFrame(rows)
+    # 只加载部分样本
+    if limit is not None:
+        df = df.iloc[:limit]
+    # 读取 CIR 波形
+    cir_list = []
+    for i, row in df.iterrows():
+        cir_path = data_dir / "signals" / row['rx_signal_file']
+        cir = np.load(cir_path)
+        cir_list.append(cir)
+    df['CIR'] = cir_list
+    df['TOA'] = (df['primary_toa'] * df['sampling_frequency']).astype(float)
+    return df

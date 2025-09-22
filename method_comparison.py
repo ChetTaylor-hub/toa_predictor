@@ -40,6 +40,7 @@ class TraditionalToAEstimators:
     
     def peak_method(self, cir: np.ndarray, noise_threshold: float = 0.1) -> float:
         """Peak方法：寻找超过噪声阈值的第一个峰值"""
+        
         peaks, _ = signal.find_peaks(np.abs(cir), height=noise_threshold)
         
         if len(peaks) == 0:
@@ -71,10 +72,10 @@ class TraditionalToAEstimators:
                 return point / self.sampling_rate
         
         # 如果没有找到合适的拐点，回退到Peak方法
-        return self.peak_method(cir, noise_threshold)
+        return None
     
     # def lde_method(self, cir: np.ndarray, noise_threshold: float = 0.1,
-    #                small_window: int = 3, large_window: int = 9, 
+    #                small_window: int = 3, large_window: int = 7, 
     #                detection_factor: float = 1.5) -> float:
     #     """LDE方法：前沿检测"""
     #     cir_abs = np.abs(cir)
@@ -94,17 +95,17 @@ class TraditionalToAEstimators:
     #             return i / self.sampling_rate
         
     #     # 如果没有找到，回退到Peak方法
-    #     return self.peak_method(cir, noise_threshold)
+    #     return None
     
     def lde_method(self,
                 cir,
                 threshold=None,         # 绝对阈值（如果指定）或 None
                 k_sigma=4.0,            # 若 threshold 为 None，则阈值 = mean_noise + k_sigma * sigma_noise
                 noise_window=None,
-                consecutive=1,          # 需要连续多少个样点高于阈值才认为触发（>=1）
+                consecutive=3,          # 需要连续多少个样点高于阈值才认为触发（>=1）
                 min_index=0,            # 忽略 min_index 之前的样点
                 max_index=None,         # 忽略 max_index 之后的样点
-                refine_subsample=True   # 是否对跨阈点做线性插值提升精度
+                refine_subsample=False  # 是否对跨阈点做线性插值提升精度
                 ):
         """
         对单个 CIR（采样波形）执行 LDE（Leading Edge Detection）
@@ -141,7 +142,7 @@ class TraditionalToAEstimators:
                 consec_count = 0
 
         if first_cross_idx is None:
-            return self.peak_method(cir, noise_threshold=thresh)
+            return None
 
         # 亚采样线性插值（在first_cross_idx与其前一样点之间）
         if refine_subsample and first_cross_idx > 0:
@@ -173,7 +174,7 @@ def estimate_noise(cir, noise_window=None, method='std'):
     """
     n = len(cir)
     if noise_window is None:
-        start = int(n * 3 / 4)
+        start = int(n * 1 / 2)
         # end = max(1, int(0.1 * n))
         noise_seg = cir[start:]
     else:
@@ -203,7 +204,7 @@ def evaluate_traditional_methods_on_data(test_data_path: str) -> dict:
             raise FileNotFoundError(f"数据路径不存在: {test_data_path}")
         
         # 检查必要的列
-        if 'CIR' not in data.columns or 'TOA' not in data.columns:
+        if 'CIR' not in data.columns or ('TOA' not in data.columns and 'target' not in data.columns):
             raise ValueError("数据必须包含CIR和TOA列")
         
         estimator = TraditionalToAEstimators()
@@ -222,27 +223,29 @@ def evaluate_traditional_methods_on_data(test_data_path: str) -> dict:
                 # 解析CIR数据
                 cir = estimator.parse_cir_string(row['CIR'])
                 # cir = cir / max(np.abs(cir)) if len(cir) > 0 else cir
-                true_toa = row['TOA']
-                
+                true_toa = row['TOA'] if 'TOA' in row else row['target']
+
                 if len(cir) == 0:
                     continue
                 
-                threshold = 0.62 * max(np.abs(cir))
                 # 计算各方法的估计结果
-                peak_toa = estimator.peak_method(cir, threshold)
-                ifp_toa = estimator.ifp_method(cir, threshold)
+                peak_toa = estimator.peak_method(cir, noise_threshold=0.6 * max(np.abs(cir)))
+                ifp_toa = estimator.ifp_method(cir, noise_threshold=0.4 * max(np.abs(cir)))
                 lde_toa = estimator.lde_method(cir)
                 
                 # 存储结果
-                results['Peak']['predictions'].append(peak_toa)
-                results['Peak']['targets'].append(true_toa)
-                
-                results['IFP']['predictions'].append(ifp_toa)
-                results['IFP']['targets'].append(true_toa)
-                
-                results['LDE']['predictions'].append(lde_toa)
-                results['LDE']['targets'].append(true_toa)
-                
+                if peak_toa is not None:
+                    results['Peak']['predictions'].append(peak_toa)
+                    results['Peak']['targets'].append(true_toa)
+
+                if ifp_toa is not None:
+                    results['IFP']['predictions'].append(ifp_toa)
+                    results['IFP']['targets'].append(true_toa)
+
+                if lde_toa is not None:
+                    results['LDE']['predictions'].append(lde_toa)
+                    results['LDE']['targets'].append(true_toa)
+
                 successful_samples += 1
                 
             except Exception:
@@ -311,19 +314,37 @@ def calculate_cdf_analysis(results_dict: dict) -> dict:
 def print_cdf_summary(cdf_analysis: dict):
     """打印CDF分析摘要，包含完整性能指标"""
     
-    print("\nToA估计方法性能对比 - CDF分析:")
-    print("=" * 60)
+    print("\nToA估计方法性能对比 - 详细分析:")
+    print("=" * 80)
     
     for method_name, analysis in cdf_analysis.items():
-        print(f"\n{method_name}方法:")
-        print(f"  MAE (平均绝对误差): {analysis['mean_error']:.3f}")
-        print(f"  标准差: {analysis['std_error']:.3f}")
+        print(f"\n【{method_name}方法】")
+        print("-" * 40)
         
+        # 基础统计指标
+        print("基础指标:")
+        print(f"  MAE (平均绝对误差): {analysis['mean_error']:.4f}")
+        
+        # 如果有RMSE信息，打印它
+        if 'rmse' in analysis:
+            print(f"  RMSE (均方根误差): {analysis['rmse']:.4f}")
+        
+        print(f"  标准差: {analysis['std_error']:.4f}")
+        print(f"  样本数量: {len(analysis['sorted_errors'])}")
+        
+        # CDF百分位数
         percentiles = analysis['percentiles']
-        print("  累积分布函数 (CDF) - 关键百分位数:")
+        print("\n累积分布函数 (CDF) - 关键百分位数:")
         for p_name, p_value in percentiles.items():
             percentage = p_name[1:]  # 去掉'p'前缀
-            print(f"    {percentage}%的误差小于等于: {p_value:.3f}")
+            print(f"  P{percentage}: {p_value:.4f} (即{percentage}%的误差≤{p_value:.4f})")
+        
+        # 误差分布概览
+        errors = analysis['sorted_errors']
+        print(f"\n误差分布概览:")
+        print(f"  最小误差: {errors[0]:.4f}")
+        print(f"  最大误差: {errors[-1]:.4f}")
+        print(f"  误差范围: {errors[-1] - errors[0]:.4f}")
         print()
 
 
@@ -532,13 +553,13 @@ def main():
         '--test_data',
         type=str,
         # required=True,
-        default="/Users/taochen/coder/code/TOA/datasets/6611037/dataset_split/test.csv",
+        default="results/toa_transformer_3/test_predictions.csv",
         help='测试数据路径（csv文件或包含csv文件的文件夹）'
     )
     parser.add_argument(
         '--experiment_dir',
         type=str,
-        default="results/toa_lstm_2",
+        default="results/toa_transformer_3",
         help='模型目录路径（可选）'
     )
     
@@ -557,6 +578,12 @@ def main():
     # 计算和打印CDF分析（包含所有性能指标）
     if traditional_results:
         cdf_analysis = calculate_cdf_analysis(traditional_results)
+        
+        # 添加传统方法的RMSE信息到CDF分析中
+        for method_name in cdf_analysis:
+            if method_name in traditional_results:
+                cdf_analysis[method_name]['rmse'] = traditional_results[method_name]['rmse']
+        
         if model_results and 'errors' in model_results:
             errors = model_results['errors']
             cdf_analysis['Model'] = {
@@ -567,7 +594,8 @@ def main():
                     for p in [50, 75, 90, 95, 99]
                 },
                 'mean_error': np.mean(errors),
-                'std_error': np.std(errors)
+                'std_error': np.std(errors),
+                'rmse': model_results['metrics']['rmse']
             }
         
         print_cdf_summary(cdf_analysis)
