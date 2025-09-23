@@ -19,6 +19,7 @@ from typing import List, Dict, Optional, Union, Tuple
 import argparse
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
+import random
 
 # Import Julia interface
 try:
@@ -691,7 +692,7 @@ class EnhancedTOADatasetGenerator:
             
             # Signal diversity
             'signal_type': np.random.choice([
-                'pulse', 'chirp', 'msequence', 'ofdm', 'tone'
+                'chirp', 'msequence', 'ofdm', 'tone'
             ]),
             'signal_duration': np.random.uniform(0.001, 0.01),
             'signal_bandwidth': 500,
@@ -910,16 +911,18 @@ class EnhancedTOADatasetGenerator:
         
         # Calculate primary TOA
         primary_toa = min(ray_times) if ray_times else 0.0
-
-        start = max(0, int(primary_toa * self.config.fs) - 100)
-        # end = start + int(self.config.signal_duration * self.config.fs)
         
         # Generate CIR using Julia's channel simulation
         try:
             received_signal = jl.transmit(ch, tx_signal, fs=self.config.fs, abstime=True)
-            cir = np.abs(np.array(received_signal).squeeze()) # Use absolute value to avoid complex issues
-            cir = cir[max(0, start):min(len(cir), start + int(self.config.signal_duration * self.config.fs))]
-            primary_toa = (primary_toa * self.config.fs - start) / self.config.fs
+            cir = np.abs(np.array(received_signal).squeeze())  # Use absolute value to avoid complex issues
+            cir = cir / (np.max(cir) + 1e-10)  # Normalize to [0, 1], avoid division by zero
+            # 随机化CIR截取窗口的起始点
+            toa = primary_toa * self.config.fs
+            start = max(0, int(toa) - random.randint(0, int(self.config.signal_duration * self.config.fs)))
+            end = start + int(self.config.signal_duration * self.config.fs)
+            cir = cir[max(0, start):min(len(cir), end)]
+            primary_toa = (toa - start) / self.config.fs
         except Exception as e:
             logger.warning(f"Julia transmit failed: {e}, using manual CIR construction")
             cir = self._manual_cir_construction(ray_times, ray_amplitudes, ray_phases, tx_signal)
@@ -1238,7 +1241,7 @@ def main():
                         help="Output directory for dataset")
     parser.add_argument("--fs", type=int, default=32000,
                         help="Sampling frequency (Hz)")
-    parser.add_argument("--signal_duration", type=float, default=0.1,
+    parser.add_argument("--signal_duration", type=float, default=0.01,
                         help="Base signal duration (s)")
     parser.add_argument("--timeout", type=int, default=30,
                         help="Timeout for channel creation (seconds)")
@@ -1275,4 +1278,4 @@ def main():
 if __name__ == "__main__":
     main()
 
-# TODO: CIR全部转为正值，TOA索引需要随机化，不能固定在100个点
+# TODO: TOA索引需要随机化，不能固定在100个点

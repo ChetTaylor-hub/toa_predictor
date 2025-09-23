@@ -55,7 +55,7 @@ class LSTMModel(BaseModel):
             # 使用exp确保输出为正值（适用于回归任务如时间序列预测）
             nn.Sigmoid() if num_classes == 1 else nn.Softmax(dim=1)
         )
-        
+
         # 初始化权重
         self._init_weights()
     
@@ -99,7 +99,7 @@ class LSTMModel(BaseModel):
         
         # 全连接层
         output = self.fc(final_hidden)
-        
+
         return output
     
     def _init_hidden(self, batch_size: int, device: torch.device):

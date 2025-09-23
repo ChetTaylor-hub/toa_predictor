@@ -130,7 +130,7 @@ class DataPreprocessor:
         
         # 确定序列长度
         if self.sequence_length is None:
-            self.sequence_length = max(max(sequence_lengths), self.max_sequence_length)
+            self.sequence_length = min(max(sequence_lengths), self.max_sequence_length)
             print(f"自动确定序列长度: {self.sequence_length}")
         
         # 统一序列长度
@@ -142,8 +142,7 @@ class DataPreprocessor:
             else:
                 # 填充到指定长度
                 processed_seq = np.zeros(self.sequence_length, dtype=np.float32)
-                start_index = np.random.randint(0, self.sequence_length - len(seq) + 1)
-                processed_seq[start_index:start_index + len(seq)] = seq
+                processed_seq[:len(seq)] = seq
 
             processed_sequences.append(processed_seq)
         
