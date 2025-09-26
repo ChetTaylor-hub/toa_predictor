@@ -6,6 +6,7 @@
 import os
 import glob
 import pandas as pd
+import numpy as np
 from typing import List, Union, Optional
 import logging
 
@@ -208,9 +209,119 @@ def get_data_summary(data: pd.DataFrame) -> dict:
     
     return summary
 
-def load_enhanced_dataset(data_dir: str, meta_file: str = None, limit: int = None) -> pd.DataFrame:
+
+def load_file_data(file_paths: List[str], column_name: str,
+                   base_paths: Optional[List[str]] = None) -> List[str]:
     """
-    加载 enhanced_toa_generator_refactored.py 生成的数据（metadata.csv 或 complete_dataset.json），自动读取信号文件
+    加载文件数据并转换为字符串格式
+    
+    Args:
+        file_paths: 文件路径列表
+        column_name: 列名（用于日志记录）
+        base_paths: 尝试的基础路径列表
+        
+    Returns:
+        加载的文件数据列表（转换为字符串格式以便保存到CSV）
+    """
+    if base_paths is None:
+        base_paths = ['', 'signals', '../signals', 'data/signals']
+    
+    loaded_data = []
+    successful_loads = 0
+    
+    for file_path in file_paths:
+        data_loaded = False
+        
+        # 处理空值或无效路径
+        if not file_path or pd.isna(file_path):
+            loaded_data.append('')
+            continue
+            
+        # 尝试不同的基础路径
+        for base_path in base_paths:
+            try:
+                if base_path:
+                    full_path = os.path.join(base_path, file_path)
+                else:
+                    full_path = file_path
+                
+                if os.path.exists(full_path):
+                    # 根据文件扩展名加载不同类型的文件
+                    if full_path.endswith('.npy'):
+                        data = np.load(full_path)
+                        # 将numpy数组转换为字符串列表格式
+                        loaded_data.append(str(data.tolist()))
+                        successful_loads += 1
+                        data_loaded = True
+                        break
+                    elif full_path.endswith('.csv'):
+                        data = pd.read_csv(full_path)
+                        # 将DataFrame转换为JSON字符串格式
+                        loaded_data.append(data.to_json(orient='records'))
+                        successful_loads += 1
+                        data_loaded = True
+                        break
+                    elif full_path.endswith(('.txt', '.dat')):
+                        with open(full_path, 'r', encoding='utf-8') as f:
+                            data = f.read()
+                        loaded_data.append(data)
+                        successful_loads += 1
+                        data_loaded = True
+                        break
+                        
+            except Exception as e:
+                logger.warning(f"加载文件 {full_path} 失败: {e}")
+                continue
+        
+        if not data_loaded:
+            logger.warning(f"无法加载文件: {file_path}")
+            loaded_data.append('')
+    
+    logger.info(
+        f"成功加载 {successful_loads}/{len(file_paths)} 个 {column_name} 文件"
+    )
+    return loaded_data
+
+
+def process_file_columns(data: pd.DataFrame, 
+                        file_columns: List[str],
+                        base_paths: Optional[List[str]] = None) -> pd.DataFrame:
+    """
+    处理DataFrame中的文件列，将文件路径替换为实际文件内容
+    
+    Args:
+        data: 输入DataFrame
+        file_columns: 需要处理的文件列名列表
+        base_paths: 尝试的基础路径列表
+        
+    Returns:
+        处理后的DataFrame（添加了_data列）
+    """
+    result_data = data.copy()
+    
+    for col in file_columns:
+        if col in data.columns:
+            logger.info(f"正在处理文件列: {col}")
+            
+            # 加载文件数据
+            file_data = load_file_data(
+                data[col].values.tolist(), col, base_paths
+            )
+            
+            # 创建新的数据列名
+            data_col_name = col.replace('_file', '_data')
+            result_data[data_col_name] = file_data
+            
+            logger.info(f"已将文件列 '{col}' 转换为数据列 '{data_col_name}'")
+    
+    return result_data
+
+
+def load_enhanced_dataset(data_dir: str, meta_file: Optional[str] = None,
+                         limit: Optional[int] = None) -> pd.DataFrame:
+    """
+    加载 enhanced_toa_generator_refactored.py 生成的数据
+    (metadata.csv 或 complete_dataset.json)，自动读取信号文件
     Args:
         data_dir: 数据集目录（如 toa_dataset_enhanced_refactored）
         meta_file: 指定元数据文件（默认自动检测）
@@ -218,41 +329,47 @@ def load_enhanced_dataset(data_dir: str, meta_file: str = None, limit: int = Non
     Returns:
         DataFrame: 包含 CIR 波形和 TOA/primary_toa
     """
-    import pandas as pd
-    import numpy as np
-    from pathlib import Path
     import json
-    data_dir = Path(data_dir)
+    from pathlib import Path
+    
+    data_path = Path(data_dir)
+    
     # 自动检测元数据文件
     if meta_file is None:
-        if (data_dir / "metadata.csv").exists():
-            meta_file = data_dir / "metadata.csv"
-            df = pd.read_csv(meta_file)
-        elif (data_dir / "complete_dataset.json").exists():
-            meta_file = data_dir / "complete_dataset.json"
+        metadata_csv = data_path / "metadata.csv"
+        dataset_json = data_path / "complete_dataset.json"
+        
+        if metadata_csv.exists():
+            df = pd.read_csv(str(metadata_csv))
+        elif dataset_json.exists():
             # JSON Lines 格式
-            with open(meta_file, 'r') as f:
+            with open(str(dataset_json), 'r') as f:
                 rows = [json.loads(line) for line in f]
             df = pd.DataFrame(rows)
         else:
             raise FileNotFoundError("未找到元数据文件")
     else:
-        meta_file = Path(meta_file)
-        if meta_file.suffix == '.csv':
-            df = pd.read_csv(meta_file)
+        meta_path = Path(meta_file)
+        if meta_path.suffix == '.csv':
+            df = pd.read_csv(str(meta_path))
         else:
-            with open(meta_file, 'r') as f:
+            with open(str(meta_path), 'r') as f:
                 rows = [json.loads(line) for line in f]
             df = pd.DataFrame(rows)
+    
     # 只加载部分样本
     if limit is not None:
         df = df.iloc[:limit]
+    
     # 读取 CIR 波形
     cir_list = []
+    signals_path = data_path / "signals"
+    
     for i, row in df.iterrows():
-        cir_path = data_dir / "signals" / row['rx_signal_file']
-        cir = np.load(cir_path)
+        cir_path = signals_path / row['rx_signal_file']
+        cir = np.load(str(cir_path))
         cir_list.append(cir)
+    
     df['CIR'] = cir_list
     df['TOA'] = (df['primary_toa'] * df['sampling_frequency']).astype(float)
     return df

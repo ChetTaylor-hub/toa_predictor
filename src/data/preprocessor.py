@@ -6,6 +6,7 @@ from sklearn.model_selection import train_test_split
 import pickle
 import os
 from typing import Optional, List, Tuple, Union
+from ..utils.data_loader import process_file_columns
 
 
 class DataPreprocessor:
@@ -18,7 +19,8 @@ class DataPreprocessor:
                  max_sequence_length: int = 1000,
                  normalize_features: bool = True,
                  normalize_targets: bool = True,
-                 scaler_type: str = "minmax"):
+                 scaler_type: str = "minmax",
+                 keep_original_columns: Optional[List[str]] = None):
         """
         初始化数据预处理器
         
@@ -30,6 +32,7 @@ class DataPreprocessor:
             normalize_features: 是否标准化特征
             normalize_targets: 是否标准化目标
             scaler_type: 标准化类型 ("standard" or "minmax")
+            keep_original_columns: 需要保留的原始列名（如tx_signal_file等）
         """
         self.input_columns = input_columns
         self.target_column = target_column
@@ -38,6 +41,7 @@ class DataPreprocessor:
         self.normalize_features = normalize_features
         self.normalize_targets = normalize_targets
         self.scaler_type = scaler_type
+        self.keep_original_columns = keep_original_columns or []
         
         # 内部状态
         self.feature_scaler = None
@@ -47,6 +51,7 @@ class DataPreprocessor:
         self.train_indices = None
         self.val_indices = None
         self.test_indices = None
+        self.original_data = None  # 保存原始数据的引用
         
     def _get_scaler(self):
         """获取标准化器"""
@@ -174,6 +179,9 @@ class DataPreprocessor:
             self
         """
         print("开始拟合数据预处理器...")
+        
+        # 保存原始数据的引用
+        self.original_data = data.copy()
         
         # 检查所需列是否存在
         missing_cols = []
@@ -370,9 +378,75 @@ class DataPreprocessor:
         
         return (X_train, y_train), (X_val, y_val), (X_test, y_test)
     
+    def get_test_original_data(self) -> pd.DataFrame:
+        """
+        获取测试集的原始数据
+        
+        Returns:
+            测试集的原始数据DataFrame
+        """
+        if self.test_indices is None:
+            raise ValueError("尚未进行数据划分，请先调用split_data方法")
+        if self.original_data is None:
+            raise ValueError("原始数据未保存")
+        
+        return self.original_data.iloc[self.test_indices].copy()
+    
+    def get_test_predictions_with_file_data(
+            self,
+            predictions: np.ndarray,
+            targets: np.ndarray,
+            base_paths: Optional[List[str]] = None
+    ) -> pd.DataFrame:
+        """
+        获取包含文件数据的测试集预测结果
+        
+        Args:
+            predictions: 预测结果
+            targets: 真实目标值
+            base_paths: 文件搜索的基础路径列表
+            
+        Returns:
+            包含预测结果和文件数据的DataFrame
+        """
+        # 获取测试集原始数据
+        test_original_data = self.get_test_original_data()
+        
+        # 构建基础结果
+        result_dict = {
+            'CIR': test_original_data['CIR'].values,
+            'target': targets,
+            'prediction': predictions,
+            'error': targets - predictions
+        }
+        
+        # 处理需要保留的列
+        for col in self.keep_original_columns:
+            if col in test_original_data.columns and col not in result_dict:
+                if col.endswith('_file'):
+                    # 使用data_loader的文件处理功能
+                    from ..utils.data_loader import load_file_data
+                    file_data = load_file_data(
+                        test_original_data[col].values.tolist(),
+                        col,
+                        base_paths
+                    )
+                    # 保存为数据列
+                    data_col_name = col.replace('_file', '_data')
+                    result_dict[data_col_name] = file_data
+                    print(f"已加载文件数据列 '{col}' 并保存为 '{data_col_name}'")
+                else:
+                    # 普通列直接保存
+                    result_dict[col] = test_original_data[col].values
+                    print(f"已添加列 '{col}' 到预测结果中")
+        
+        return pd.DataFrame(result_dict)
+    
     @classmethod
-    def from_config_and_data(cls, config: dict, data_path: str = "", 
-                           data: Optional[pd.DataFrame] = None) -> Tuple['DataPreprocessor', pd.DataFrame]:
+    def from_config_and_data(
+            cls, config: dict, data_path: str = "",
+            data: Optional[pd.DataFrame] = None
+    ) -> Tuple['DataPreprocessor', pd.DataFrame]:
         """
         从配置和数据路径或数据创建预处理器
         
@@ -407,7 +481,8 @@ class DataPreprocessor:
             max_sequence_length=data_config.get('max_sequence_length', 1000),
             normalize_features=data_config.get('normalize_features', True),
             normalize_targets=data_config.get('normalize_targets', True),
-            scaler_type=data_config.get('scaler_type', 'minmax')
+            scaler_type=data_config.get('scaler_type', 'minmax'),
+            keep_original_columns=data_config.get('keep_columns', [])
         )
         
         return preprocessor, data

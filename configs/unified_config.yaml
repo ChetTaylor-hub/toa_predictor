@@ -5,6 +5,7 @@ data:
   # 数据列配置
   input_columns: ["CIR"]        # 输入列名列表，支持多列
   target_column: "TOA"          # 目标列名
+  keep_columns: ["tx_signal_file"] # 保存到预测结果中的原始列，如果列不存在则跳过
   
   # 序列处理配置
   sequence_length: null         # 序列长度，null表示自动确定
@@ -23,7 +24,7 @@ data:
 # 模型配置
 model:
   type: "transformer"                # 模型类型: lstm, transformer
-  hidden_size: 128                   # 隐藏层大小
+  hidden_size: 32                    #  隐藏层大小
   num_layers: 2                      # 层数
   dropout: 0.2                       # Dropout率
   bidirectional: False               # LSTM是否双向
@@ -32,9 +33,9 @@ model:
 
 # 训练配置
 training:
-  epochs: 100                # 训练轮数
-  batch_size: 32             # 批次大小
-  learning_rate: 0.001       # 学习率
+  epochs: 1                 # 训练轮数
+  batch_size: 16              # 批次大小
+  learning_rate: 0.0001        # 学习率
   weight_decay: 1e-5         # 权重衰减
   
   # 损失函数配置

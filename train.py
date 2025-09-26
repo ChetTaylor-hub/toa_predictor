@@ -10,6 +10,7 @@ import sys
 import yaml
 import torch
 import numpy as np
+import pandas as pd
 from torch.utils.data import DataLoader, TensorDataset
 
 # 添加项目根目录到Python路径
@@ -32,6 +33,9 @@ def create_data_loader(X, y, batch_size=32, shuffle=True):
     y_tensor = torch.FloatTensor(y)
     dataset = TensorDataset(X_tensor, y_tensor)
     return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle)
+
+
+
 
 
 def create_model(config, input_size, device):
@@ -118,7 +122,7 @@ def main():
     
     # 创建实验日志记录器（保存到实验目录）
     logger = create_experiment_logger(
-        args.experiment_name, 
+        args.experiment_name,
         experiment_dir  # 将日志保存到实验目录
     )
     logger.info(f"开始实验: {args.experiment_name}")
@@ -154,15 +158,14 @@ def main():
     else:
         raise FileNotFoundError(f"路径不存在: {args.data_path}")
     
-    # 保留原始数据副本以供后续使用
-    original_data = data.copy()
+    # 原始数据已在preprocessor中保存，不需要额外副本
     
     logger.info(f"数据形状: {data.shape}")
     logger.info(f"输入列: {preprocessor.input_columns}")
     logger.info(f"目标列: {preprocessor.target_column}")
     
     # 划分数据
-    print(f"\n2. 划分数据集...")
+    print("\n2. 划分数据集...")
     train_data, val_data, test_data = preprocessor.split_data(
         data,
         train_ratio=config['data']['train_ratio'],
@@ -178,23 +181,31 @@ def main():
     print(f"验证集: X={X_val.shape}, y={y_val.shape}")
     print(f"测试集: X={X_test.shape}, y={y_test.shape}")
     
-    logger.info(f"数据形状 - 训练: {X_train.shape}, 验证: {X_val.shape}, 测试: {X_test.shape}")
+    logger.info(
+        f"数据形状 - 训练: {X_train.shape}, 验证: {X_val.shape}, "
+        f"测试: {X_test.shape}"
+    )
     
     # 创建数据加载器
-    print(f"\n3. 创建数据加载器...")
+    print("\n3. 创建数据加载器...")
     batch_size = config['training']['batch_size']
-    train_loader = create_data_loader(X_train, y_train, batch_size, shuffle=True)
+    train_loader = create_data_loader(
+        X_train, y_train, batch_size, shuffle=True
+    )
     val_loader = create_data_loader(X_val, y_val, batch_size, shuffle=False)
     test_loader = create_data_loader(X_test, y_test, batch_size, shuffle=False)
     
     # 创建模型
-    print(f"\n4. 创建模型...")
+    print("\n4. 创建模型...")
     input_size = X_train.shape[2]  # 特征维度
     model = create_model(config, input_size, device)
     
     print(f"输入特征维度: {input_size}")
     print(f"模型参数数量: {model.get_num_parameters()}")
-    logger.info(f"模型: {config['model']['type']}, 参数数量: {model.get_num_parameters()}")
+    logger.info(
+        f"模型: {config['model']['type']}, "
+        f"参数数量: {model.get_num_parameters()}"
+    )
     
     # 创建损失函数
     loss_type = config['training'].get('loss_function', {}).get('type', 'auto')
@@ -211,7 +222,9 @@ def main():
     training_config['scheduler'] = scheduler_config['type']
     training_config['step_size'] = scheduler_config.get('step_size', 30)
     training_config['gamma'] = scheduler_config.get('gamma', 0.5)
-    training_config['scheduler_patience'] = scheduler_config.get('patience', 10)
+    training_config['scheduler_patience'] = scheduler_config.get(
+        'patience', 10
+    )
     
     optimizer = create_optimizer(model, training_config)
     scheduler = create_scheduler(optimizer, training_config)
@@ -221,8 +234,12 @@ def main():
     
     # 修改训练配置，将检查点保存到实验目录
     training_config_with_dir = config['training'].copy()
-    training_config_with_dir['checkpoint_dir'] = os.path.join(experiment_dir, 'checkpoints')
-    training_config_with_dir['tensorboard'] = config.get('logging', {}).get('tensorboard', False)
+    training_config_with_dir['checkpoint_dir'] = os.path.join(
+        experiment_dir, 'checkpoints'
+    )
+    training_config_with_dir['tensorboard'] = config.get(
+        'logging', {}
+    ).get('tensorboard', False)
     training_config_with_dir['log_dir'] = experiment_dir
     
     trainer = ModelTrainer(
@@ -247,7 +264,9 @@ def main():
     logger.info("开始测试模型...")
     
     # 加载最佳模型
-    checkpoint_best_path = os.path.join(trainer.checkpoint_dir, 'best_model.pth')
+    checkpoint_best_path = os.path.join(
+        trainer.checkpoint_dir, 'best_model.pth'
+    )
     if os.path.exists(checkpoint_best_path):
         checkpoint = torch.load(checkpoint_best_path, map_location=device)
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -279,7 +298,9 @@ def main():
     torch.save(model.state_dict(), final_model_path)
     
     # 复制最佳模型到实验目录根目录（方便访问）
-    checkpoint_best_path = os.path.join(trainer.checkpoint_dir, 'best_model.pth')
+    checkpoint_best_path = os.path.join(
+        trainer.checkpoint_dir, 'best_model.pth'
+    )
     if os.path.exists(checkpoint_best_path):
         import shutil
         best_model_dest = os.path.join(experiment_dir, "best_model.pth")
@@ -292,7 +313,9 @@ def main():
     
     if hasattr(preprocessor, 'inverse_transform_target'):
         logger.info("反归一化预测结果和目标值...")
-        predictions_original = preprocessor.inverse_transform_target(predictions)
+        predictions_original = preprocessor.inverse_transform_target(
+            predictions
+        )
         targets_original = preprocessor.inverse_transform_target(targets)
     else:
         predictions_original = predictions
@@ -300,7 +323,9 @@ def main():
 
     # 计算详细指标
     from src.utils.metrics import calculate_metrics
-    metrics = calculate_metrics(targets_original, predictions_original, task_type='regression')
+    metrics = calculate_metrics(
+        targets_original, predictions_original, task_type='regression'
+    )
 
     # 保存评估结果
     eval_results = {
@@ -318,18 +343,13 @@ def main():
 
     # 保存预测结果（原始尺度）
     predictions_file = os.path.join(experiment_dir, 'test_predictions.csv')
-    import pandas as pd
     
-    # 获取测试集的原始CIR数据
-    test_indices = preprocessor.test_indices
-    test_cir_data = original_data.iloc[test_indices]['CIR'].values
+    # 使用预处理器的方法获取包含文件数据的预测结果
+    base_paths = [os.path.join(args.data_path, 'signals'), '../signals', 'data/signals']
+    df_results = preprocessor.get_test_predictions_with_file_data(
+        predictions_original, targets_original, base_paths
+    )
     
-    df_results = pd.DataFrame({
-        'CIR': test_cir_data,
-        'target': targets_original,
-        'prediction': predictions_original,
-        'error': targets_original - predictions_original
-    })
     df_results.to_csv(predictions_file, index=False)
     logger.info(f"测试集预测结果已保存到: {predictions_file}")
     

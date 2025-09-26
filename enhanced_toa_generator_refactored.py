@@ -916,12 +916,12 @@ class EnhancedTOADatasetGenerator:
         try:
             received_signal = jl.transmit(ch, tx_signal, fs=self.config.fs, abstime=True)
             cir = np.abs(np.array(received_signal).squeeze())  # Use absolute value to avoid complex issues
-            cir = cir / (np.max(cir) + 1e-10)  # Normalize to [0, 1], avoid division by zero
             # 随机化CIR截取窗口的起始点
             toa = primary_toa * self.config.fs
             start = max(0, int(toa) - random.randint(0, int(self.config.signal_duration * self.config.fs)))
             end = start + int(self.config.signal_duration * self.config.fs)
             cir = cir[max(0, start):min(len(cir), end)]
+            cir = cir / (np.max(cir) + 1e-10)  # Normalize to [0, 1], avoid division by zero
             primary_toa = (toa - start) / self.config.fs
         except Exception as e:
             logger.warning(f"Julia transmit failed: {e}, using manual CIR construction")

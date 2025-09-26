@@ -245,12 +245,23 @@ def main():
     # 保存预测结果（原始尺度）
     predictions_file = os.path.join(args.experiment_dir, 'test_predictions.csv')
     import pandas as pd
-    df_results = pd.DataFrame({
+    
+    # 构建结果DataFrame
+    result_dict = {
         'CIR': data['CIR'],
         'target': targets_original,
         'prediction': predictions_original,
         'error': targets_original - predictions_original
-    })
+    }
+    
+    # 添加配置中指定需要保存的列
+    if hasattr(preprocessor, 'keep_original_columns'):
+        for col in preprocessor.keep_original_columns:
+            if col in data.columns and col not in result_dict:
+                result_dict[col] = data[col].values
+                print(f"已添加列 '{col}' 到预测结果中")
+    
+    df_results = pd.DataFrame(result_dict)
     df_results.to_csv(predictions_file, index=False)
     
     print(f"\n评估完成！")
