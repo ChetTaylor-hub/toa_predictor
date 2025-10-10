@@ -52,27 +52,70 @@ pip install -r requirements.txt
 
 ## 使用方法
 
-### 生成示例数据
+### 🆕 对比学习训练（推荐）
+
+#### 快速演示
+```bash
+# 运行对比学习演示（自动生成示例数据）
+python demo_contrastive.py
+
+# 或使用快速启动脚本
+./quickstart_contrastive.sh
+```
+
+#### 完整对比学习训练
+```bash
+# 对比学习预训练 + 有监督微调
+python train_contrastive.py \
+    --config configs/contrastive_config.yaml \
+    --data_path data/your_dataset \
+    --experiment_name toa_contrastive \
+    --mode both
+
+# 仅对比学习预训练
+python train_contrastive.py \
+    --config configs/contrastive_config.yaml \
+    --data_path data/your_dataset \
+    --experiment_name toa_pretrain \
+    --mode contrastive
+
+# 传统有监督训练（基准对比）
+python train_contrastive.py \
+    --config configs/contrastive_config.yaml \
+    --data_path data/your_dataset \
+    --experiment_name toa_supervised \
+    --mode supervised
+```
+
+#### 对比实验
+```bash
+# 运行对比学习 vs 传统训练的性能对比
+python comparison_experiment.py
+```
+
+### 传统训练方法
+
+#### 生成示例数据
 ```bash
 python generate_cir_toa_data.py
 ```
 
-### 训练模型
+#### 训练模型
 ```bash
-python train.py --config configs/default_config.yaml --data_path data/raw/cir_toa_train.csv --experiment_name cir_toa_experiment
+python train.py --config configs/unified_config.yaml --data_path data/raw/cir_toa_train.csv --experiment_name cir_toa_experiment
 ```
 
-### 评估模型
+#### 评估模型
 ```bash
-python evaluate.py --model_path checkpoints/best_model.pth --data_path data/raw/cir_toa_test.csv --preprocessor_path data/splits/cir_toa_experiment/preprocessor.pkl --task_type regression
+python evaluate.py --experiment_dir results/your_experiment --data_path data/test_dataset
 ```
 
-### 推理
+#### 推理
 ```bash
-python inference.py --model_path checkpoints/best_model.pth --input_path data/raw/your_cir_data.csv --preprocessor_path data/splits/cir_toa_experiment/preprocessor.pkl --output_path results/toa_predictions.csv
+python inference.py --experiment_dir results/your_experiment --input_path data/new_data.csv --output_path results/predictions.csv
 ```
 
-### 快速开始
+#### 快速开始
 ```bash
 chmod +x quickstart.sh
 ./quickstart.sh
